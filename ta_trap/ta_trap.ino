@@ -136,7 +136,7 @@ void setup()
 /*
    Loop Function
    -Check pir ISR alarm and raise alarm when needed
-   -Check new sms from Gsm module after every 30sec
+   -Check new sms from Gsm module after every 30sec (WdTime)
    -Send status SMS message after every 24h
 */
 void loop()
@@ -265,12 +265,11 @@ void handleSms()
       reply += "Toiminta: OK";
 
       reply += "\nAika:";
-      char tmpBuffer[18];
-      snprintf(tmpBuffer, 18, "%02d/%02d/%02d,%02d:%02d:%02d",
-              year(startTime) % 100, month(startTime), day(startTime),
-              hour(startTime), minute(startTime) , second(startTime));
+      char tmpBuffer[19];
+      snprintf(tmpBuffer, 19, "%02d/%02d/%02d,%02d:%02d:%02d",
+               year() % 100, month(), day(),
+               hour(), minute(), second());
       reply += tmpBuffer;
-      Serial.println(reply);
     }
 
     reply += "\nKytketty:";
