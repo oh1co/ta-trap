@@ -40,6 +40,7 @@ void deleteAllSms();
    Global variables
    **************** */
 const byte SmsMaxSize = 128;
+const unsigned long statusSmsInterval = SECS_PER_DAY;
 boolean armed = false;
 volatile boolean Traplaunched = false;
 volatile boolean PirAlarmValue = false;
@@ -50,7 +51,7 @@ char SetPhoneNumber[15] = {'\0'}; // number where trap launched information will
 char sms_text[SmsMaxSize]; // array for the SMS text string
 char dateAndTime[64];
 String armedTime = "No";
-unsigned long nextSyncTime = SECS_PER_HOUR * 4;
+unsigned long nextSyncTime = statusSmsInterval;
 time_t startTime;
 time_t currentTime;
 byte buzzerPin = 10;
@@ -176,15 +177,20 @@ void loop()
     if ((currentTime - startTime) >= nextSyncTime)
     {
       SendStatusMsg = true;
-      int overtime = (currentTime - startTime);
-      nextSyncTime = (SECS_PER_HOUR * 4) - overtime;
+      int overtime = (currentTime - startTime) - (statusSmsInterval);
+
+      nextSyncTime = (statusSmsInterval) - overtime;
       startTime = currentTime;
+      noInterrupts();
+      SecondsCounter = 0;
+      interrupts();
     }
     else
     {
-      nextSyncTime = (SECS_PER_HOUR * 4) - (currentTime - startTime);
+      noInterrupts();
+      SecondsCounter = currentTime - startTime;
+      interrupts();
     }
-    SecondsCounter = 0;
     Serial.println("Next sync Time");
     Serial.println(nextSyncTime);
   }
