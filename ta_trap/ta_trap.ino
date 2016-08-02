@@ -46,7 +46,7 @@ volatile boolean Traplaunched = false;
 volatile boolean PirAlarmValue = false;
 boolean SendStatusMsg = false;
 boolean alarmSent = false;
-char phone_num[15]; // array for the phone number string
+char phone_num[15] = {'\0'}; // array for the phone number string
 char SetPhoneNumber[15] = {'\0'}; // number where trap launched information will be sent!
 char sms_text[SmsMaxSize]; // array for the SMS text string
 char dateAndTime[64];
@@ -286,8 +286,16 @@ void handleSms()
     reply += voltage;
 
     reply.toCharArray(smsReply, SmsMaxSize);
-    sms_text[0] = '\0';
     sms.SendSMS(phone_num, smsReply);
+    if (strcmp(SetPhoneNumber, phone_num) != 0 && armed)
+    {
+      reply += "\nKysely:";
+      reply += phone_num;
+      reply.length();
+      reply.toCharArray(smsReply, SmsMaxSize);
+      sms.SendSMS(SetPhoneNumber, smsReply);
+    }
+    sms_text[0] = '\0';
   }
 };
 
@@ -383,14 +391,12 @@ void getGsmTime()
 {
   getTime();
   String currentTime(dateAndTime);
-  Serial.println(currentTime);
   byte nowYear = currentTime.substring(0, 2).toInt();
   byte nowMonth = currentTime.substring(3, 5).toInt();
   byte nowDate = currentTime.substring(6, 8).toInt();
   byte nowHH = currentTime.substring(9, 11).toInt();
   byte nowMM = currentTime.substring(12, 14).toInt();
   byte nowSec = currentTime.substring(15, 17).toInt();
-  Serial.println("Set time!");
   setTime((int)nowHH, (int)nowMM, (int)nowSec, (int)nowDate, (int)nowMonth, (int)nowYear);
   adjustTime(3);
 }
