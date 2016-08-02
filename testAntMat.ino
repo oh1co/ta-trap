@@ -261,7 +261,17 @@ void handleSms()
     char smsReply[SmsMaxSize];
     String reply;
     if (armed)
+    {
       reply += "Toiminta: OK";
+
+      reply += "\nAika:";
+      char tmpBuffer[18];
+      snprintf(tmpBuffer, 18, "%02d/%02d/%02d,%02d:%02d:%02d",
+              year(startTime) % 100, month(startTime), day(startTime),
+              hour(startTime), minute(startTime) , second(startTime));
+      reply += tmpBuffer;
+      Serial.println(reply);
+    }
 
     reply += "\nKytketty:";
     reply += armedTime;
