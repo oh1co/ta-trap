@@ -262,6 +262,7 @@ void handleSms()
     String reply;
     if (armed)
     {
+      getGsmTime();
       reply += "Toiminta: OK";
 
       reply += "\nAika:";
