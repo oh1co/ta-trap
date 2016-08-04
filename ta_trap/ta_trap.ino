@@ -9,16 +9,20 @@
 #include <avr/sleep.h>
 #include <avr/wdt.h>
 #include <Time.h>
+#include "Trap.h"
+#include "sms.h"
 
 SoftwareSerial mySerial(7, 8);
-
-#include "sms.h"
-SMSGSM sms;
 
 #define DEBUG true // flag to turn on/off debugging
 #define Serial if(DEBUG)Serial
 
-#define LowVoltageLimit 2.40
+#define LowVoltageLimit 1.45
+/* ****************
+   I/O pin definitions
+   **************** */
+const byte buzzerPin = 10;
+
 /* ****************
    Interrupts pins
    **************** */
@@ -28,38 +32,34 @@ const byte pirInterrupt = 2;
    Analog pins
    **************** */
 const byte voltageInputPin = 1;
+
 /* ****************
    Function list
    **************** */
-void handleSms();
-void getTime();
+void setup();
+void loop();
+void handleSms(char * phone_num, char* sms_text);
+void getTime(char* dateAndTime);
 void alarmSet(int highDelay, int lowDelay, byte times);
 void deleteAllSms();
+void sendSms();
+void delayWdt(byte nsec);
+void getGsmTime();
 
 /* ****************
    Global variables
    **************** */
-const byte SmsMaxSize = 128;
+Trap trap;
+SMSGSM sms;
+
+const byte SmsMaxSize = 160;
 const unsigned long statusSmsInterval = SECS_PER_DAY;
-boolean armed = false;
-volatile boolean Traplaunched = false;
 volatile boolean PirAlarmValue = false;
-boolean SendStatusMsg = false;
-boolean alarmSent = false;
-char phone_num[15] = {'\0'}; // array for the phone number string
-char SetPhoneNumber[15] = {'\0'}; // number where trap launched information will be sent!
-char sms_text[SmsMaxSize]; // array for the SMS text string
-char dateAndTime[64];
-String armedTime = "No";
-unsigned long nextSyncTime = statusSmsInterval;
-time_t startTime;
-time_t currentTime;
-byte buzzerPin = 10;
 byte WdTime = 30;
+byte nbr_remaining = 0;
 
 volatile byte wdExpired = 0;
 volatile double SecondsCounter = 0;
-volatile byte nbr_remaining = 0;
 
 const char registerClkSer[] = {"AT+CLTS=1"};
 const char updateCCLK[] = {"AT+CCLK?"};
@@ -72,9 +72,17 @@ const char statusMessage[] = {"TILA"};
 */
 ISR (WDT_vect)
 {
-  nbr_remaining--;
   wdExpired++;
   SecondsCounter++;
+}
+/*
+   Pir alarms ISR (Interrupt Service Routine)
+*/
+void pirAlarm()
+{
+  detachInterrupt(digitalPinToInterrupt(pirInterrupt));
+  PirAlarmValue = true;
+  //  tone(buzzerPin, 532 , 2500);
 }
 
 /*
@@ -82,11 +90,12 @@ ISR (WDT_vect)
     -Initialize Serial port
     -Initialize gms module
     -Set Pin Inputs & Outputs
-    -Used Pins 0,1 RX / TX
+    -Initialize watchdog
+    -Used Pins 0,1 RX / TX (arduino)
                2,3 PIR alamrs
                4-6 NONE
-               7,8 RX,TX
-               9 GSM POWER ON / OFF
+               7,8 RX,TX (GSM shield)
+               9 NONE
                10 buzzer
                11 GsmLed
                12 TrapLed
@@ -99,7 +108,6 @@ void setup()
   pinMode(buzzerPin, OUTPUT);
 
   pinMode(pirInterrupt, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(pirInterrupt), pirAlarm, LOW);
 
   //Start configuration of shield with baudrate.
   if (gsm.begin(2400))
@@ -131,6 +139,7 @@ void setup()
   /* Enable the WD interrupt (note no reset). */
   WDTCSR |= _BV(WDIE);
   sei();
+  trap.nextSyncTime = statusSmsInterval;
 };
 
 /*
@@ -145,8 +154,10 @@ void loop()
   delayWdt(WdTime);
   if (wdExpired >= WdTime )
   {
+    noInterrupts();
     wdExpired = 0;
-    //Serial.println(F("WD expired"));
+    interrupts();
+    Serial.println(F("WD expired"));
     checkGsm = true;
   }
 
@@ -154,33 +165,36 @@ void loop()
   if (PirAlarmValue == true)
   {
     Serial.println("PIR");
+    noInterrupts();
     PirAlarmValue = false;
+    interrupts();
+    trap.Traplaunched = true;
     alarmSet(250, 150, 20);
     alarmSet(150, 50, 10);
     alarmSet(75, 25, 5);
 
     attachInterrupt(digitalPinToInterrupt(pirInterrupt), pirAlarm, LOW);
     Serial.println("re-attach PIR");
-    if (alarmSent == false)
+    if (trap.alarmSent == false)
     {
       sendSms();
-      alarmSent = true;
+      trap.alarmSent = true;
     }
   }
 
   //Check time 24h from GSM network
-  //5% safety margin because of clock drift..
-  if (SecondsCounter >= nextSyncTime * 0.95 && armed)
+  //6% safety margin because of clock drift..
+  if (SecondsCounter >= trap.nextSyncTime * 0.94 && trap.armed)
   {
     getGsmTime();
-    currentTime = now();
-    if ((currentTime - startTime) >= nextSyncTime)
+    time_t currentTime = now();
+    if ((currentTime - trap.startTime) >= trap.nextSyncTime)
     {
-      SendStatusMsg = true;
-      int overtime = (currentTime - startTime) - (statusSmsInterval);
+      trap.SendStatusMsg = true;
+      int overtime = (currentTime - trap.startTime) - (statusSmsInterval);
 
-      nextSyncTime = (statusSmsInterval) - overtime;
-      startTime = currentTime;
+      trap.nextSyncTime = (statusSmsInterval) - overtime;
+      trap.startTime = currentTime;
       noInterrupts();
       SecondsCounter = 0;
       interrupts();
@@ -188,69 +202,82 @@ void loop()
     else
     {
       noInterrupts();
-      SecondsCounter = currentTime - startTime;
+      SecondsCounter = currentTime - trap.startTime;
       interrupts();
     }
     Serial.println("Next sync Time");
-    Serial.println(nextSyncTime);
+    Serial.println(trap.nextSyncTime);
   }
 
   //Check GSM Module status after every 30 sec
   if (checkGsm)
   {
-    //Serial.println(F("Check new SMS"));
+    Serial.println(F("Check new SMS"));
     char position = sms.IsSMSPresent(SMS_UNREAD);
-    if (position)
+    if (position > 0)
     {
+      Serial.println(F("New SMS received!"));
       // there is new SMS => read it
+      char sms_text[SmsMaxSize];
+      char phone_num[15];// array for the phone number string
+      memset(sms_text, 0, SmsMaxSize);
+      memset(phone_num, 0, 15);
       sms.GetSMS(position, phone_num, sms_text, SmsMaxSize);
-      handleSms();
+      Serial.println(sms_text);
+      handleSms(phone_num, sms_text);
     }
   }
 
-  if (SendStatusMsg && armed)
+  float voltage = (float) analogRead(A1) * 5 / 1024;
+  if (voltage < LowVoltageLimit && trap.armed && (!trap.batteryStatusSent))
+  {
+    Serial.println("Send Battery Status!");
+    char trapBatteryStatus[30] = "VAROITUS! Akku loppumassa!!";
+    sms.SendSMS(trap.SetPhoneNumber, trapBatteryStatus);
+    trap.batteryStatusSent = true;
+  }
+
+  if (trap.sendStatus())
   {
     Serial.println(F("Status Time.."));
-
-    if (SetPhoneNumber[0] != '\0')
-    {
-      Serial.print(F("Send SMS!"));
-      memcpy(sms_text, statusMessage, 7);
-      handleSms();
-    }
-    SendStatusMsg = false;
+    char sms_text[SmsMaxSize];
+    memset(sms_text, 0, SmsMaxSize);
+    memcpy(sms_text, statusMessage, 7);
+    handleSms(trap.SetPhoneNumber, sms_text);
+    trap.SendStatusMsg = false;
   }
 };
 
 /*
    This function will handle all received sms mesages
    Currently supports two (2) different messages.
-   "Arm" will arm trap and "STATUS" gives sms response to where is
-   arm status and battery level.
+   "setMessage" will arm trap and "statusMessage" gives sms response to arm status and battery level.
 */
-void handleSms()
+void handleSms(char* phone_num, char* sms_text)
 {
   Serial.println("handleSms");
   String receivedSms(sms_text);
   receivedSms.toUpperCase();
   receivedSms.trim();
+  char tmpBuffer[19];
   if (receivedSms.startsWith(setMessage))
   {
     //Serial.println("SET message received. -> Arm trap");
     char smsReply[SmsMaxSize] = "Aktivoitu";
-    armed = true;
-    sms_text[0] = '\0';
     deleteAllSms();
-    Traplaunched = false;
+    trap.armed = true;
+    trap.Traplaunched = false;
+    trap.alarmSent = false;
+    trap.batteryStatusSent = false;
     delay(10000);
     getGsmTime();
-    armedTime = dateAndTime;
-    armedTime = armedTime.substring(0, armedTime.length() - 3);
-    startTime = now();
+    snprintf(trap.armedTime, 19, "%02d/%02d/%02d,%02d:%02d:%02d",
+             year() % 100, month(), day(),
+             hour(), minute(), second());
+    trap.startTime = now();
     Serial.println(smsReply);
     sms.SendSMS(phone_num, smsReply);
-    alarmSent = false;
-    memcpy(SetPhoneNumber, phone_num, 15);
+    memcpy(trap.SetPhoneNumber, phone_num, 15);
     attachInterrupt(digitalPinToInterrupt(pirInterrupt), pirAlarm, LOW);
     Serial.println(F("Set Done"));
   }
@@ -260,13 +287,12 @@ void handleSms()
     //Serial.println("STATUS message received. -> Resp with status & battery level");
     char smsReply[SmsMaxSize];
     String reply;
-    if (armed)
+    if (trap.armed)
     {
       getGsmTime();
       reply += "Toiminta: OK";
 
       reply += "\nAika:";
-      char tmpBuffer[19];
       snprintf(tmpBuffer, 19, "%02d/%02d/%02d,%02d:%02d:%02d",
                year() % 100, month(), day(),
                hour(), minute(), second());
@@ -274,13 +300,13 @@ void handleSms()
     }
 
     reply += "\nKytketty:";
-    reply += armedTime;
+    reply += trap.armedTime;
 
     reply += "\nAktivoija:";
-    reply += SetPhoneNumber;
+    reply += trap.SetPhoneNumber;
 
     reply += "\nHalytys:";
-    reply += Traplaunched;
+    reply += trap.Traplaunched;
 
     reply += "\nAkku: ";
     float voltage = (float) analogRead(A1) * 5 / 1024;
@@ -288,15 +314,14 @@ void handleSms()
 
     reply.toCharArray(smsReply, SmsMaxSize);
     sms.SendSMS(phone_num, smsReply);
-    if (strcmp(SetPhoneNumber, phone_num) != 0 && armed)
+    if (strcmp(trap.SetPhoneNumber, phone_num) != 0 && trap.armed)
     {
       reply += "\nKysely:";
       reply += phone_num;
       reply.length();
       reply.toCharArray(smsReply, SmsMaxSize);
-      sms.SendSMS(SetPhoneNumber, smsReply);
+      sms.SendSMS(trap.SetPhoneNumber, smsReply);
     }
-    sms_text[0] = '\0';
   }
 };
 
@@ -304,7 +329,7 @@ void handleSms()
     Query time from GSM server.
     NOTE: 2s delay between req & response reading
 */
-void getTime()
+void getTime(char* dateAndTime)
 {
   gsm.SimpleWriteln(updateCCLK);
   delay(2000);
@@ -317,7 +342,7 @@ void getTime()
   tmp = tmp.substring(startIndex, endIndex);
   Serial.println(tmp);
   tmp.toCharArray(dateAndTime, 21);
-};
+}
 
 /*
    This function blink led lights.
@@ -350,18 +375,8 @@ void deleteAllSms()
 void sendSms()
 {
   char trapArmed[17] = "Tarkista pyydys!";
-  sms.SendSMS(SetPhoneNumber, trapArmed);
-  alarmSent = true;
-}
-
-/*
-   Pir alarms ISR (Interrupt Service Routine)
-*/
-void pirAlarm()
-{
-  detachInterrupt(digitalPinToInterrupt(pirInterrupt));
-  Traplaunched = true;
-  PirAlarmValue = true;
+  sms.SendSMS(trap.SetPhoneNumber, trapArmed);
+  trap.alarmSent = true;
 }
 
 /*
@@ -378,8 +393,9 @@ void delayWdt(byte nsec)
   {
     sleep_mode();
     sleep_disable();
-    if (SecondsCounter >= nextSyncTime)
+    if (SecondsCounter >= trap.nextSyncTime)
       break;
+    nbr_remaining--;
   }
   power_all_enable();
 }
@@ -390,8 +406,10 @@ void delayWdt(byte nsec)
 */
 void getGsmTime()
 {
-  getTime();
-  String currentTime(dateAndTime);
+  char dateNow[64];
+  memset(dateNow, 0, 64);
+  getTime(dateNow);
+  String currentTime(dateNow);
   byte nowYear = currentTime.substring(0, 2).toInt();
   byte nowMonth = currentTime.substring(3, 5).toInt();
   byte nowDate = currentTime.substring(6, 8).toInt();
