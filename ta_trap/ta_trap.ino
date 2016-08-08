@@ -14,7 +14,7 @@
 #define DEBUG true // flag to turn on/off debugging
 #define Serial if(DEBUG)Serial
 
-#define LowVoltageLimit 1.45
+#define LowVoltageLimit 1.75
 /* ****************
    I/O pin definitions
    **************** */
@@ -55,7 +55,7 @@ const byte SmsMaxSize = 160;
 const unsigned long statusSmsInterval = SECS_PER_DAY;
 volatile boolean PirAlarmValue = false;
 volatile boolean GsmAlarmValue = false;
-unsigned int WdTime = SECS_PER_DAY / 2;
+unsigned int WdTime = SECS_PER_DAY / 4;
 unsigned int nbr_remaining = 0;
 
 volatile byte wdExpired = 0;
