@@ -126,6 +126,7 @@ void setup()
     delay(2000);
     getGsmTime();
     attachInterrupt(digitalPinToInterrupt(gsmInterrupt), gsmAlarm, LOW);
+    alarmSet(50, 50, 5);
     Serial.println(F("\nREADY"));
   }
   else
