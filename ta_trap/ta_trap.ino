@@ -4,15 +4,12 @@
    => 240h / 1200mAh = 0.2mA
 */
 #include "SIM900.h"
-#include <SoftwareSerial.h>
 #include <avr/power.h>
 #include <avr/sleep.h>
 #include <avr/wdt.h>
 #include <Time.h>
 #include "Trap.h"
 #include "sms.h"
-
-SoftwareSerial mySerial(7, 8);
 
 #define DEBUG true // flag to turn on/off debugging
 #define Serial if(DEBUG)Serial
@@ -27,6 +24,7 @@ const byte buzzerPin = 10;
    Interrupts pins
    **************** */
 const byte pirInterrupt = 2;
+const byte gsmInterrupt = 3;
 
 /* ****************
    Analog pins
@@ -43,7 +41,7 @@ void getTime(char* dateAndTime);
 void alarmSet(int highDelay, int lowDelay, byte times);
 void deleteAllSms();
 void sendSms();
-void delayWdt(byte nsec);
+void delayWdt(unsigned nsec);
 void getGsmTime();
 
 /* ****************
@@ -55,8 +53,9 @@ SMSGSM sms;
 const byte SmsMaxSize = 160;
 const unsigned long statusSmsInterval = SECS_PER_DAY;
 volatile boolean PirAlarmValue = false;
-byte WdTime = 30;
-byte nbr_remaining = 0;
+volatile boolean GsmAlarmValue = false;
+unsigned int WdTime = SECS_PER_DAY / 2;
+unsigned int nbr_remaining = 0;
 
 volatile byte wdExpired = 0;
 volatile double SecondsCounter = 0;
@@ -86,20 +85,30 @@ void pirAlarm()
 }
 
 /*
+   GSM Ring indicator (RI) ISR (Interrupt Service Routine)
+*/
+void gsmAlarm()
+{
+  detachInterrupt(digitalPinToInterrupt(gsmInterrupt));
+  GsmAlarmValue = true;
+}
+
+/*
     Setup function
     -Initialize Serial port
     -Initialize gms module
     -Set Pin Inputs & Outputs
     -Initialize watchdog
     -Used Pins 0,1 RX / TX (arduino)
-               2,3 PIR alamrs
-               4-6 NONE
+               2 PIR alamrs
+               3 GSM Ring Indicator
+               4 GSM POWER UP
                7,8 RX,TX (GSM shield)
                9 NONE
                10 buzzer
-               11 GsmLed
-               12 TrapLed
-               13 BatteryLed
+               11 NONE
+               12 NONE
+               13 NONE
 */
 void setup()
 {
@@ -116,6 +125,7 @@ void setup()
     gsm.SimpleWriteln(registerClkSer);
     delay(2000);
     getGsmTime();
+    attachInterrupt(digitalPinToInterrupt(gsmInterrupt), gsmAlarm, LOW);
     Serial.println(F("\nREADY"));
   }
   else
@@ -145,12 +155,12 @@ void setup()
 /*
    Loop Function
    -Check pir ISR alarm and raise alarm when needed
-   -Check new sms from Gsm module after every 30sec (WdTime)
+   -Check gsm ISR alarm and send alarm message when needed
+   -Check battery voltage after every 12h
    -Send status SMS message after every 24h
 */
 void loop()
 {
-  boolean checkGsm = false;
   delayWdt(WdTime);
   if (wdExpired >= WdTime )
   {
@@ -158,7 +168,6 @@ void loop()
     wdExpired = 0;
     interrupts();
     Serial.println(F("WD expired"));
-    checkGsm = true;
   }
 
   // Check PIR alarms
@@ -210,8 +219,12 @@ void loop()
   }
 
   //Check GSM Module status after every 30 sec
-  if (checkGsm)
+  //  if (checkGsm)
+  if (GsmAlarmValue)
   {
+    noInterrupts();
+    GsmAlarmValue = false;
+    interrupts();
     Serial.println(F("Check new SMS"));
     char position = sms.IsSMSPresent(SMS_UNREAD);
     if (position > 0)
@@ -226,6 +239,7 @@ void loop()
       Serial.println(sms_text);
       handleSms(phone_num, sms_text);
     }
+    attachInterrupt(digitalPinToInterrupt(gsmInterrupt), gsmAlarm, LOW);
   }
 
   float voltage = (float) analogRead(A1) * 5 / 1024;
@@ -384,7 +398,7 @@ void sendSms()
    Wake up after nSec has been elapsed, PIR alarm or
    when need to send daily status SMS
 */
-void delayWdt(byte nsec)
+void delayWdt(unsigned nsec)
 {
   nbr_remaining = nsec;
   power_adc_disable();
@@ -394,6 +408,8 @@ void delayWdt(byte nsec)
     sleep_mode();
     sleep_disable();
     if (SecondsCounter >= trap.nextSyncTime)
+      break;
+    if (GsmAlarmValue == true)
       break;
     nbr_remaining--;
   }
