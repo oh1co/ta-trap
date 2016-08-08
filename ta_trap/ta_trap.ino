@@ -18,7 +18,8 @@
 /* ****************
    I/O pin definitions
    **************** */
-const byte buzzerPin = 10;
+const byte led1Pin = 10;
+const byte buzzer1Pin = 12;
 
 /* ****************
    Interrupts pins
@@ -81,7 +82,7 @@ void pirAlarm()
 {
   detachInterrupt(digitalPinToInterrupt(pirInterrupt));
   PirAlarmValue = true;
-  //  tone(buzzerPin, 532 , 2500);
+  //  tone(led1Pin, 532 , 2500);
 }
 
 /*
@@ -105,16 +106,18 @@ void gsmAlarm()
                4 GSM POWER UP
                7,8 RX,TX (GSM shield)
                9 NONE
-               10 buzzer
+               10 Led1
                11 NONE
-               12 NONE
+               12 buzzer
                13 NONE
 */
 void setup()
 {
   Serial.begin(9600);
   Serial.println(F("GSM Shield testing."));
-  pinMode(buzzerPin, OUTPUT);
+  pinMode(led1Pin, OUTPUT);
+  pinMode(buzzer1Pin, OUTPUT);
+  digitalWrite(buzzer1Pin, LOW);
 
   pinMode(pirInterrupt, INPUT_PULLUP);
 
@@ -178,10 +181,11 @@ void loop()
     noInterrupts();
     PirAlarmValue = false;
     interrupts();
-    trap.Traplaunched = true;
+    trap.Traplaunched = true;;
     alarmSet(250, 150, 20);
     alarmSet(150, 50, 10);
     alarmSet(75, 25, 5);
+    tone(buzzer1Pin, 333, 10000);
 
     attachInterrupt(digitalPinToInterrupt(pirInterrupt), pirAlarm, LOW);
     Serial.println("re-attach PIR");
@@ -190,6 +194,7 @@ void loop()
       sendSms();
       trap.alarmSent = true;
     }
+    noTone(buzzer1Pin);
   }
 
   //Check time 24h from GSM network
@@ -240,6 +245,7 @@ void loop()
       Serial.println(sms_text);
       handleSms(phone_num, sms_text);
     }
+    attachInterrupt(digitalPinToInterrupt(pirInterrupt), pirAlarm, LOW);
     attachInterrupt(digitalPinToInterrupt(gsmInterrupt), gsmAlarm, LOW);
   }
 
@@ -361,16 +367,16 @@ void getTime(char* dateAndTime)
 
 /*
    This function blink led lights.
-   NOTE: Tone command would be better here
 */
 void alarmSet(int highDelay, int lowDelay, byte times)
 {
-  Serial.println(F("Alarm!"));
   for (int i = 0; i < times; i++)
   {
-    digitalWrite(buzzerPin, HIGH);
+    digitalWrite(led1Pin, HIGH);
+    tone(buzzer1Pin, highDelay);
     delay(highDelay);
-    digitalWrite(buzzerPin, LOW);
+    noTone(buzzer1Pin);
+    digitalWrite(led1Pin, LOW);
     delay(lowDelay);
   }
 }
