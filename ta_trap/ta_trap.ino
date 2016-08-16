@@ -183,7 +183,7 @@ void loop()
     noInterrupts();
     PirAlarmValue = false;
     interrupts();
-    trap.Traplaunched = true;;
+    trap.Traplaunched = true;
     alarmSet(250, 150, 20);
     alarmSet(150, 50, 10);
     alarmSet(75, 25, 5);
@@ -364,7 +364,7 @@ void handleSms(char* phone_num, char* sms_text)
       sms.SendSMS(trap.SetPhoneNumber, smsReply);
     }
   }
-  else if (receivedSms == stopGsm)
+  else if (receivedSms == stopGsm && trap.Traplaunched)
   {
     trap.toggleGsm();
   }
