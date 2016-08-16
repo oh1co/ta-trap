@@ -65,6 +65,7 @@ const char registerClkSer[] = {"AT+CLTS=1"};
 const char updateCCLK[] = {"AT+CCLK?"};
 const char setMessage[] = {"ASETA"};
 const char statusMessage[] = {"TILA"};
+const char stopGsm[] = {"STOP GSM"};
 
 /*
    Watchdog interrupt routine.
@@ -130,6 +131,7 @@ void setup()
     getGsmTime();
     attachInterrupt(digitalPinToInterrupt(gsmInterrupt), gsmAlarm, LOW);
     alarmSet(50, 50, 5);
+    trap.gsmOn = true;
     Serial.println(F("\nREADY"));
   }
   else
@@ -226,7 +228,7 @@ void loop()
 
   //Check GSM Module status after every 30 sec
   //  if (checkGsm)
-  if (GsmAlarmValue)
+  if (GsmAlarmValue && trap.gsmOn )
   {
     noInterrupts();
     GsmAlarmValue = false;
@@ -249,9 +251,16 @@ void loop()
     attachInterrupt(digitalPinToInterrupt(gsmInterrupt), gsmAlarm, LOW);
   }
 
+  bool shutDownGsm = false;
   float voltage = (float) analogRead(A1) * 5 / 1024;
   if (voltage < LowVoltageLimit && trap.armed && (!trap.batteryStatusSent))
   {
+    if (!trap.gsmOn)
+    {
+      trap.toggleGsm();
+      if (gsm.begin(2400))
+        shutDownGsm = true;
+    }
     Serial.println("Send Battery Status!");
     char trapBatteryStatus[30] = "VAROITUS! Akku loppumassa!!";
     sms.SendSMS(trap.SetPhoneNumber, trapBatteryStatus);
@@ -260,12 +269,23 @@ void loop()
 
   if (trap.sendStatus())
   {
+    if (!trap.gsmOn)
+    {
+      trap.toggleGsm();
+      if (gsm.begin(2400))
+        shutDownGsm = true;
+    }
+
     Serial.println(F("Status Time.."));
     char sms_text[SmsMaxSize];
     memset(sms_text, 0, SmsMaxSize);
     memcpy(sms_text, statusMessage, 7);
     handleSms(trap.SetPhoneNumber, sms_text);
     trap.SendStatusMsg = false;
+  }
+  if (shutDownGsm)
+  {
+    trap.toggleGsm();
   }
 };
 
@@ -343,6 +363,10 @@ void handleSms(char* phone_num, char* sms_text)
       reply.toCharArray(smsReply, SmsMaxSize);
       sms.SendSMS(trap.SetPhoneNumber, smsReply);
     }
+  }
+  else if (receivedSms == stopGsm)
+  {
+    trap.toggleGsm();
   }
 };
 

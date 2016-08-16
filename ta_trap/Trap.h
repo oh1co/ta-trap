@@ -7,6 +7,7 @@ class Trap
   public:
     Trap();
     ~Trap();
+    void toggleGsm();
     bool sendStatus();
     bool SendStatusMsg;
     bool batteryStatusSent;
@@ -17,6 +18,7 @@ class Trap
     unsigned long nextSyncTime;
     char armedTime[20];
     bool Traplaunched;
+    bool gsmOn;
     
   private:
 };
